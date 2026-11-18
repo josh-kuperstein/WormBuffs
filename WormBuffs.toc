@@ -1,8 +1,9 @@
 ## Interface: 16016, 16001, 16000
 ## Title: Worm Buffs
 ## Notes: Big, loud, clickable icons when you're missing your own buffs (Soul Link, Demon Armor, ...).
-## Author: Josh
-## Version: 1.0.0
+## Author: Wormdirt
+## Version: 1.0.1
 ## SavedVariablesPerCharacter: WormBuffsCharDB
+## IconTexture: Interface\Icons\Ability_Hunter_Pet_Worm
 
 WormBuffs.lua
