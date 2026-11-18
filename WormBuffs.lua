@@ -12,10 +12,20 @@ local MAX_ICONS = 8
 
 -- Each entry is satisfied if ANY of its names is on you. Entries only apply if
 -- you know at least one of the spells, so these lists are safe to over-fill.
+--
+-- A "weapon" entry is a temporary enchant on your main hand instead of a buff.
+-- `create` is the spell that makes the item; the entry applies if you know it.
+-- Only a temporary enchant whose name contains names[1] counts, so a weapon
+-- oil or a permanent enchant doesn't hide a missing spellstone.
+--
+-- `since` marks defaults added after 1.0. Characters that already have saved
+-- settings get those entries added once, on their next login.
+local DEFAULTS_REV = 2
 local CLASS_DEFAULTS = {
   WARLOCK = {
     { names = { "Demon Armor", "Demon Skin" } },
     { names = { "Soul Link" }, needsPet = true },
+    { names = { "Spellstone" }, weapon = true, create = "Create Spellstone", since = 2 },
   },
   MAGE = {
     { names = { "Arcane Intellect", "Arcane Brilliance" } },
@@ -48,7 +58,7 @@ local function CopyEntries(src)
   for i, e in ipairs(src or {}) do
     local names = {}
     for j, n in ipairs(e.names) do names[j] = n end
-    out[i] = { names = names, needsPet = e.needsPet or nil }
+    out[i] = { names = names, needsPet = e.needsPet or nil, weapon = e.weapon or nil, create = e.create }
   end
   return out
 end
@@ -88,8 +98,74 @@ local function HasBuff(name)
   return nil
 end
 
--- status: "ok" | "missing" | "notknown" | "unknown"; plus info for the spell to cast
+local MAIN_HAND = 16
+
+-- Checks the main hand for a temporary enchant whose name contains `text`.
+-- GetWeaponEnchantInfo only says whether *some* temporary enchant is there
+-- (permanent enchants never count), so the name comes from the weapon's
+-- tooltip, where it shows as a line like "Grand Spellstone (59 min)". That
+-- keeps weapon oils and other stones from passing as a spellstone.
+-- Returns true/false, or nil + reason when it can't tell. Also returns what it
+-- saw, for /wbuffs debug.
+local function MainHandHasEnchant(text)
+  if not GetWeaponEnchantInfo then return nil, "GetWeaponEnchantInfo missing" end
+  local ok, has, _, _, enchantID = pcall(GetWeaponEnchantInfo)
+  if not ok then return nil, "GetWeaponEnchantInfo failed" end
+  if issecretvalue and (issecretvalue(has) or issecretvalue(enchantID)) then return nil, "hidden right now" end
+  if not has then return false, "no temporary enchant" end
+
+  if not (C_TooltipInfo and C_TooltipInfo.GetInventoryItem) then return nil, "C_TooltipInfo missing" end
+  local okTip, data = pcall(C_TooltipInfo.GetInventoryItem, "player", MAIN_HAND)
+  if not okTip or not data or not data.lines then return nil, "couldn't read weapon tooltip" end
+  for _, line in ipairs(data.lines) do
+    local t = line.leftText
+    if t and issecretvalue and issecretvalue(t) then return nil, "hidden right now" end
+    -- The enchant line ends in a duration in parentheses; the weapon's own
+    -- name and stats don't, so a weapon called "...Spellstone..." won't match.
+    if t and t:find(text, 1, true) and t:find("%(.+%)%s*$") then
+      return true, string.format("found \"%s\" (enchant %s)", t, tostring(enchantID))
+    end
+  end
+  return false, "temporary enchant " .. tostring(enchantID) .. " isn't a " .. text
+end
+
+-- Finds a bag item whose name contains `text`. Returns its name and icon.
+local function FindBagItem(text)
+  if not (C_Container and C_Container.GetContainerNumSlots) then return nil end
+  for bag = 0, (NUM_BAG_SLOTS or 4) do
+    for slot = 1, C_Container.GetContainerNumSlots(bag) or 0 do
+      local info = C_Container.GetContainerItemInfo(bag, slot)
+      local name = info and info.hyperlink and info.hyperlink:match("%[(.-)%]")
+      if name and name:find(text, 1, true) then return name, info.iconFileID end
+    end
+  end
+  return nil
+end
+
+-- Weapon entries: clicking applies the stone if you have one, else makes one.
+local function EvaluateWeapon(entry)
+  local createInfo = KnownSpell(entry.create)
+  if not createInfo then return "notknown" end
+  if not GetInventoryItemID("player", MAIN_HAND) then return "notknown" end  -- nothing to put it on
+  local has = MainHandHasEnchant(entry.names[1])
+  if has == nil then return "unknown" end
+  if has then return "ok" end
+
+  local stone, stoneIcon = FindBagItem(entry.names[1])
+  local item = { name = entry.names[1], icon = stoneIcon or createInfo.iconID }
+  if stone then
+    item.macrotext = "/use " .. stone .. "\n/use " .. MAIN_HAND
+    item.tip = "Click to put " .. stone .. " on your weapon."
+  else
+    item.spell = createInfo.name
+    item.tip = "None in your bags. Click to make one, then click again."
+  end
+  return "missing", item
+end
+
+-- status: "ok" | "missing" | "notknown" | "unknown"; plus what to show/cast
 local function Evaluate(entry)
+  if entry.weapon then return EvaluateWeapon(entry) end
   local castInfo
   for _, n in ipairs(entry.names) do
     local info = KnownSpell(n)
@@ -103,7 +179,7 @@ local function Evaluate(entry)
     if has == nil then return "unknown" end
     if has then return "ok" end
   end
-  return "missing", castInfo
+  return "missing", { name = castInfo.name, icon = castInfo.iconID, spell = castInfo.name }
 end
 
 ------------------------------------------------------------------------
@@ -133,7 +209,7 @@ local function ShowTooltip(self)
   if self.noPet then
     GameTooltip:AddLine("Summon a demon first.", 1, 1, 1)
   else
-    GameTooltip:AddLine("Click to cast.", 1, 1, 1)
+    GameTooltip:AddLine(self.tip or "Click to cast.", 1, 1, 1)
   end
   GameTooltip:Show()
 end
@@ -180,7 +256,7 @@ local function CreateIcon(i)
   return b
 end
 
--- list: array of { name=, icon=, noPet= }
+-- list: array of { name=, icon=, noPet=, spell= or macrotext=, tip= }
 local function Render(list)
   if InCombatLockdown() then pendingUpdate = true return end
   local n = math.min(#list, MAX_ICONS)
@@ -196,7 +272,17 @@ local function Render(list)
         b.icon:SetDesaturated(item.noPet and true or false)
         b.spellName = item.name
         b.noPet = item.noPet
-        b:SetAttribute("spell", (not testMode and not item.noPet) and item.name or nil)
+        b.tip = item.tip
+        local live = not testMode and not item.noPet
+        if live and item.macrotext then
+          b:SetAttribute("type", "macro")
+          b:SetAttribute("macrotext", item.macrotext)
+          b:SetAttribute("spell", nil)
+        else
+          b:SetAttribute("type", "spell")
+          b:SetAttribute("spell", live and item.spell or nil)
+          b:SetAttribute("macrotext", nil)
+        end
         b.label:SetText("MISSING\n" .. string.upper(item.name) .. (item.noPet and "\n|cffffffff(no pet)|r" or ""))
         b:EnableMouse(db.locked)
         b:Show()
@@ -208,21 +294,32 @@ local function Render(list)
   end
 end
 
+-- What each entry showed last time, so an entry the game won't answer for
+-- right now keeps its icon (or lack of one) instead of guessing.
+local lastShown = {}
+
 local function Collect()
   local list = {}
+  local shown = {}
   for _, entry in ipairs(db.watch) do
     if testMode then
-      local info = KnownSpell(entry.names[1])
-      table.insert(list, { name = info and info.name or entry.names[1], icon = info and info.iconID })
+      local info = KnownSpell(entry.create or entry.names[1])
+      table.insert(list, { name = entry.weapon and entry.names[1] or (info and info.name) or entry.names[1],
+        icon = info and info.iconID })
     else
-      local status, info = Evaluate(entry)
-      if status == "unknown" then return nil end   -- can't trust this pass; keep what's shown
-      if status == "missing" then
-        local noPet = entry.needsPet and not UnitExists("pet")
-        table.insert(list, { name = info.name, icon = info.iconID, noPet = noPet })
+      local status, item = Evaluate(entry)
+      if status == "unknown" then
+        item = lastShown[entry]
+      elseif status ~= "missing" then
+        item = nil
+      elseif entry.needsPet and not UnitExists("pet") then
+        item.noPet = true
       end
+      shown[entry] = item
+      if item then table.insert(list, item) end
     end
   end
+  if not testMode then lastShown = shown end
   return list
 end
 
@@ -300,10 +397,25 @@ end
 local function InitDB()
   WormBuffsCharDB = WormBuffsCharDB or {}
   db = WormBuffsCharDB
+  local _, class = UnitClass("player")
   if db.watch == nil then
-    local _, class = UnitClass("player")
     db.watch = CopyEntries(CLASS_DEFAULTS[class])
+  else
+    -- Saved settings from an older version: add any defaults newer than them,
+    -- once. A later /wbuffs remove sticks because the rev is saved.
+    local rev = db.defaultsRev or 1
+    local added = {}
+    for _, e in ipairs(CLASS_DEFAULTS[class] or {}) do
+      if (e.since or 1) > rev then
+        table.insert(db.watch, CopyEntries({ e })[1])
+        table.insert(added, e.names[1])
+      end
+    end
+    if #added > 0 then
+      C_Timer.After(5, function() Print("Now also watching: " .. table.concat(added, ", ") .. ". /wbuffs list to see all.") end)
+    end
   end
+  db.defaultsRev = DEFAULTS_REV
   if db.locked == nil then db.locked = true end
   if db.sound == nil then db.sound = true end
   db.scale = db.scale or 1
@@ -320,7 +432,7 @@ local function ListWatch()
   Print("Watching:")
   for i, e in ipairs(db.watch) do
     DEFAULT_CHAT_FRAME:AddMessage(string.format("  %d. %s%s", i, table.concat(e.names, " or "),
-      e.needsPet and " |cff888888(needs pet)|r" or ""))
+      (e.needsPet and " |cff888888(needs pet)|r" or "") .. (e.weapon and " |cff888888(on weapon)|r" or "")))
   end
 end
 
@@ -330,12 +442,27 @@ local function Debug()
   for i, e in ipairs(db.watch) do
     local status = Evaluate(e)
     local parts = {}
-    for _, n in ipairs(e.names) do
+    if e.weapon then
+      local has, why = MainHandHasEnchant(e.names[1])
+      local stone = FindBagItem(e.names[1])
+      table.insert(parts, string.format("%s [%s known:%s weapon:%s on weapon:%s (%s) in bags:%s]", e.names[1],
+        e.create, KnownSpell(e.create) and "yes" or "no",
+        GetInventoryItemID("player", MAIN_HAND) and "yes" or "no", tostring(has), why, stone or "none"))
+    end
+    for _, n in ipairs(e.weapon and {} or e.names) do
       local info = KnownSpell(n)
       local has = HasBuff(info and info.name or n)
       table.insert(parts, string.format("%s [known:%s buff:%s]", n, info and "yes" or "no", tostring(has)))
     end
     DEFAULT_CHAT_FRAME:AddMessage(string.format("  %d. %s -> |cffffff00%s|r", i, table.concat(parts, ", "), status))
+  end
+  -- What each visible icon will actually do when clicked.
+  for i, b in ipairs(icons) do
+    if b:IsShown() then
+      local action = b:GetAttribute("macrotext") or b:GetAttribute("spell") or "nothing"
+      DEFAULT_CHAT_FRAME:AddMessage(string.format("  icon %d: %s -> click type:%s does:%s",
+        i, tostring(b.spellName), tostring(b:GetAttribute("type")), (action:gsub("\n", " | "))))
+    end
   end
 end
 
@@ -437,6 +564,12 @@ ev:SetScript("OnEvent", function(self, event, unit)
     self:RegisterEvent("PLAYER_UNGHOST")
     self:RegisterUnitEvent("UNIT_AURA", "player")
     self:RegisterUnitEvent("UNIT_PET", "player")
+    self:RegisterUnitEvent("UNIT_INVENTORY_CHANGED", "player")  -- weapon enchants come and go
+    -- A stone was made or used. Several events in case one doesn't fire on this
+    -- client; pcall because registering an unknown event is an error.
+    pcall(self.RegisterEvent, self, "BAG_UPDATE_DELAYED")
+    pcall(self.RegisterEvent, self, "BAG_UPDATE")
+    pcall(self.RegisterUnitEvent, self, "UNIT_SPELLCAST_SUCCEEDED", "player")
     -- Safety net in case an aura change slips past the events.
     C_Timer.NewTicker(3, function() if not InCombatLockdown() then QueueUpdate() end end)
     QueueUpdate()
