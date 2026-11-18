@@ -456,6 +456,14 @@ local function Debug()
     end
     DEFAULT_CHAT_FRAME:AddMessage(string.format("  %d. %s -> |cffffff00%s|r", i, table.concat(parts, ", "), status))
   end
+  -- What each visible icon will actually do when clicked.
+  for i, b in ipairs(icons) do
+    if b:IsShown() then
+      local action = b:GetAttribute("macrotext") or b:GetAttribute("spell") or "nothing"
+      DEFAULT_CHAT_FRAME:AddMessage(string.format("  icon %d: %s -> click type:%s does:%s",
+        i, tostring(b.spellName), tostring(b:GetAttribute("type")), (action:gsub("\n", " | "))))
+    end
+  end
 end
 
 local HELP = {
