@@ -2,7 +2,7 @@
 ## Title: Worm Buffs
 ## Notes: Big, loud, clickable icons when you're missing your own buffs (Soul Link, Demon Armor, ...).
 ## Author: Wormdirt
-## Version: 1.0.0
+## Version: 1.0.1
 ## SavedVariablesPerCharacter: WormBuffsCharDB
 ## IconTexture: Interface\Icons\Ability_Hunter_Pet_Worm
 
