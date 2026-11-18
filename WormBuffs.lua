@@ -565,7 +565,11 @@ ev:SetScript("OnEvent", function(self, event, unit)
     self:RegisterUnitEvent("UNIT_AURA", "player")
     self:RegisterUnitEvent("UNIT_PET", "player")
     self:RegisterUnitEvent("UNIT_INVENTORY_CHANGED", "player")  -- weapon enchants come and go
-    self:RegisterEvent("BAG_UPDATE_DELAYED")                     -- a stone was made or used
+    -- A stone was made or used. Several events in case one doesn't fire on this
+    -- client; pcall because registering an unknown event is an error.
+    pcall(self.RegisterEvent, self, "BAG_UPDATE_DELAYED")
+    pcall(self.RegisterEvent, self, "BAG_UPDATE")
+    pcall(self.RegisterUnitEvent, self, "UNIT_SPELLCAST_SUCCEEDED", "player")
     -- Safety net in case an aura change slips past the events.
     C_Timer.NewTicker(3, function() if not InCombatLockdown() then QueueUpdate() end end)
     QueueUpdate()
