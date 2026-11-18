@@ -16,13 +16,17 @@ Each character gets its class defaults the first time it logs in. An entry count
 
 | Class | Buffs |
 |---|---|
-| Warlock | Demon Armor or Demon Skin; Soul Link (needs a pet) |
+| Warlock | Demon Armor or Demon Skin; Soul Link (needs a pet); Spellstone on your weapon |
 | Mage | Arcane Intellect or Arcane Brilliance; Mage, Ice or Frost Armor |
 | Priest | Power Word: Fortitude or Prayer of Fortitude; Inner Fire |
 | Druid | Mark of the Wild or Gift of the Wild |
 | Warrior | Battle Shout |
 
 If Soul Link is missing because your demon isn't out, the icon turns gray and says "(no pet)" instead of trying to cast.
+
+The Spellstone check looks for the spellstone itself on your main hand. A weapon oil or a permanent enchant doesn't count, so the icon still shows. Clicking it puts the spellstone from your bags on your weapon, or casts Create Spellstone if you don't have one (click again afterwards to apply it).
+
+Characters that already had Worm Buffs set up get the Spellstone entry added automatically the next time they log in. `/wbuffs remove` takes it off for good if you don't want it.
 
 ## Commands
 
