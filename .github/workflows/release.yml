@@ -1,0 +1,48 @@
+name: Release
+
+# Every merge to main runs this. The version in WormBuffs.toc is the source of
+# truth: if no tag exists for it yet, tag this commit and publish a release.
+# Merges that don't bump the version (docs, chores) do nothing.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Read version from .toc
+        id: version
+        run: |
+          ver=$(sed -n 's/^## Version: *//p' WormBuffs.toc | tr -d '\r')
+          echo "$ver" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "::error::bad version in WormBuffs.toc: '$ver'"; exit 1; }
+          tag="v$ver"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+            echo "$tag already released; nothing to do."
+            echo "new=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "new=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build zip
+        if: steps.version.outputs.new == 'true'
+        run: git archive --format=zip --prefix=WormBuffs/ -o "WormBuffs-${{ steps.version.outputs.tag }}.zip" HEAD WormBuffs.toc WormBuffs.lua
+
+      - name: Create release
+        if: steps.version.outputs.new == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: gh release create "$TAG" "WormBuffs-$TAG.zip" --target "$GITHUB_SHA" --title "$TAG" --generate-notes
